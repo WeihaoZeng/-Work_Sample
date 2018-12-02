@@ -1,0 +1,257 @@
+---
+title: "Bitcoin_trust_network"
+author: "Agnes Jiang, Weihao Zeng,Shreeya Goyal"
+date: "February 27, 2018"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, echo=FALSE, include = FALSE}
+
+library(igraph)
+library(ggplot2)
+bitcoin_data <- read.table("soc-sign-bitcoinalpha.csv", sep = ",")
+bitcoin_data<-bitcoin_data[,1:3]
+colnames(bitcoin_data)<-c("ego","alt","strength")
+# For degree with id less than 200, they have high degree. In the prediction part, when we join the table, it would make the file really large. And when we try to run the prediction for group of 4 people, the formular is 30 GB. That's why we shrink the network here.
+data<-subset(bitcoin_data,ego>200&alt>200)
+data2<-data
+data3<-data
+data4<-data
+data5<-data
+
+```
+## Part 1: Dataset Introduction
+## Part 2: Overview of the dataset
+```{r part1}
+
+bitcoin_graph <- graph.data.frame(d = bitcoin_data[,1:3], directed = T) 
+summary(bitcoin_graph)
+
+```
+There are 3,783 nodes and 24,186 edges in the network.
+
+###Degree Distribution
+```{r degree distribution, fig.height = 3, fig.width = 4, fig.align = "center"}
+G_degrees = degree(bitcoin_graph)
+G_degree_hist = as.data.frame(table(G_degrees))
+G_degree_hist[,1] <- as.numeric(G_degree_hist[,1])
+ggplot(G_degree_hist, aes(x = G_degrees, y = Freq)) + geom_point() +
+  scale_x_continuous("Degree)", breaks = c(1, 3, 10, 30, 100, 300), trans = "log10") +
+  scale_y_continuous("Frequency", breaks = c(1, 3, 10, 30, 100, 300, 1000), trans = "log10") +
+  ggtitle("Degree Distribution (log-log)") + theme_bw()
+
+```
+
+It's a kind of power-law distribution, indicating sparsely connected network in the real world. Older users that entered the transaction market earlier have more edges (transactions) on average, and they prefer to attach to nodes with many connections.
+
+###Shortest Path & Degree
+```{r}
+
+sp_in <- shortest.paths(bitcoin_graph, mode='in')
+sp_out <- shortest.paths(bitcoin_graph, mode='out')
+indegree <- degree(bitcoin_graph, mode='in')
+outdegree <- degree(bitcoin_graph, mode='out')
+sp_in_vec <- vector()
+sp_out_vec <- vector()
+for (i in 1:vcount(bitcoin_graph)) {
+  sp_in_vec[i] <- mean(sp_in[i,])
+  sp_out_vec[i] <- mean(sp_out[i,])
+}
+node_stats_df <- cbind(indegree, outdegree, sp_in_vec, sp_out_vec)
+paste("Average degree: ",round(mean(indegree[which(indegree != Inf)]), 2))
+paste("Average shortest path: ",round(mean(sp_in[which(sp_in != Inf)]), 2))
+
+```
+
+The mean degree of 6.4 shows that on average every user has transactions with 6 people in the transaction market.
+The mean shortest path of 3.7 indicates that to get first-hand of impression about a user, we need to ask on average 3 users with directed connection.
+
+
+###Centrality analysis
+```{r}
+
+indegree <- degree(bitcoin_graph, mode='in')
+outdegree <- degree(bitcoin_graph, mode='out')
+betweenness <- betweenness(bitcoin_graph)
+bitcoin_undirected <- as.undirected(bitcoin_graph, mode='collapse')
+ev_obj <- evcent(bitcoin_undirected)
+eigen <- ev_obj$vector
+central <- data.frame(V(bitcoin_graph)$name, indegree, outdegree, betweenness, eigen)
+
+top_indegree = as.vector(central[order(-central$indegree),1][1:5])
+top_outdegree = as.vector(central[order(-central$outdegree),1][1:5])
+top_betweenness = as.vector(central[order(-central$betweenness),1][1:5])
+top_eigen = as.vector(central[order(-central$eigen),1][1:5])
+data.frame(cbind(top_indegree, top_outdegree, top_betweenness, top_eigen))
+
+```
+
+We found that user with id 1 stands on the center of this network in most of the ways to method centrality.
+
+```{r, centrality plots,  fig.align = "center"}
+
+par(mfrow=c(2,2))
+barplot(central$indegree, names.arg=central$V.bitcoin_graph..name, main = "In-degree Centrality")
+barplot(central$outdegree, names.arg=central$V.bitcoin_graph..name, main = "Out-degree Centrality")
+barplot(central$betweenness, names.arg=central$V.bitcoin_graph..name, main = "Betweenness Centrality")
+barplot(central$eigen, names.arg=central$V.bitcoin_graph..name, main = "Eigenvector Centrality")
+
+```
+
+
+* From these 4 plots of centralities, we see that indegree has almost the same pattern with outdegree. It indicates that the rating in this anonymous transaction network is highly interactional. No matter whether the transaction is successful or not, users are very likely to get feedback rating if they give ratings to the one they made transacton.
+
+* The other graphs of centrality also show similar patterns when looking at peaks and low values. But the eigen vector draws our attention. Users with high eigenvectors are not those with the highest degrees, and instead, they are tightly connected to high-scoring users. In our case, if we are not able to connect with users with the highest degrees first, we can try to find those with high eigenvector and ask them to help introduce.
+
+* The high variance of centrality within the network also indicates a very typical network in the social topic, when different users have different patterns of connecting to others. Some are new in the transaction system when they do not have many connections, but some have joined very early and have active interaction inside.
+
+### Centrality correlation
+```{r}
+
+print("Centrality correlation: ")
+round(cor(central[,2:5]),3)
+paste("Reciprocity: ", round(reciprocity(bitcoin_graph),3))
+
+```
+
+* When looking at the correlation of different centrality methods, we see extremely high correlation of 0.97 between indegree and outdegree centrality. This indicates a very integrated network when the ratings are two-ways in most of the cases. The high reciprocity also supports this finding. 
+
+* The other centralities are also highly correlations, showing that we may not able to tell much difference from those methods of centralities, and either method can easily capture our important nodes. This is consistent with the result I showed previously about the most important users.
+
+* The relatively low correlation between eigen vector and betweenness centrality also catches our attention. It indicates that while there will be overlap in leadership of this transaction network, users can have many connections but still be on the periphery of a larger community, and users can have few connections but be in the center of the information flows.
+
+
+### Triad census
+```{r}
+
+census_labels = c('003','012', '102', '021D', '021U', '021C', '111D', '111U', 
+                  '030T', '030C', '201', '120D', '120U', '120C', '210', '300')
+tc <- triad.census(bitcoin_graph)
+data.frame(census_labels, tc)
+
+```
+
+* We also conducted the triad analysis to find patterns within small groups of users in this network. The most frequent patterns are the first three, which makes sense when considering such a large social network. Most users connect to just a few of other users in the system because of limitations such as time and power to transact, while only a few users have strong connections to the others.
+
+* We want to highlight the result on the second half of triad identification. The frequency of the eleventh one, which only exists reciprocal connections between two over three of users, is very high when comparing to the other types.
+
+* It brought a question to us. Since this kind of relation is pretty common, **are we able to predict the relationship between these two people in this triad who have not connected yet based on the information of existing edges.** A good news is that the sufficient data of relations in complete triads (types 9 and 12 to 16) can help us to figure out this question. Based on what information we have, we try to build regression to predict the weighted relationship.
+
+## Part 3: ERGM 
+```{r}
+library(statnet)
+
+m <- ergm( data~ edges+mutual+ triangles+gwesp(decay = .05, fixed = TRUE) + gwidegree(decay = 10, fixed = TRUE),
+                       control = control.ergm(MCMC.interval = 2))
+summary(m)
+mcmc.diagnostics(m)
+
+```
+
+## Part 3: Regression to Predict Weigthed Trust
+
+To address this question, we buile a linear regression. Suppose we have 3 nodes here, A, B and C. Then the dependent variable would be the strength from the A to C, and the independent variable would be the strength from the A to B, the strength from the B to C, the fairness of A (the average strength that A trust others), the goodness of C (the average strength that C is trusted by others) and the interaction terms.
+
+```{r,echo=FALSE,}
+
+### using sql to join the data
+### calculate the mean trust given by the ego node and the mean trust given by the alternative node
+### combine the data, then this data frame is ready to run the prediciton
+library(sqldf)
+library(dplyr)
+datafor3<-sqldf("select data.ego as one, data.alt as two, data2.alt as three, data.strength as onetwo ,
+                        data2.strength as twothree, data3.strength as onethree 
+                from data 
+                join data2 
+                on data2.ego=data.alt 
+                join data3 
+                on data3.ego=data.ego 
+                and data3.alt=data2.alt")
+
+fair = data %>% group_by(ego) %>% summarise(fairness = mean(strength))
+good = data %>% group_by(alt) %>% summarise(goodness = mean(strength))
+
+datafor3 = merge(datafor3, fair, by.x = 'one', by.y = 'ego', all.x = T)
+datafor3 = merge(datafor3, good, by.x = 'three', by.y = 'alt', all.x = T)
+
+predictfor3<-lm(onethree~onetwo+twothree+goodness+fairness+goodness*onetwo+goodness*twothree+
+                  goodness*fairness+fairness*onetwo+fairness*twothree+onetwo*twothree,data=datafor3)
+summary(predictfor3)
+
+```
+
+Based on the regression ,the adjusted R-square is 0.6844, which means we can predict 68.44% of the variation in the strength from A to C based on this model. Since we have really limited resource in this data (we start from only three columns, which is the id of the ego node, the id of the alternative node and the strength), we want to check whether using a network of 4 which is in similar pattern would enhance the adjusted R-square.
+
+```{r,echo=FALSE,}
+
+## we use the similar command in sql, but this time make sure the first node is not the third node, and the second node is not the fourth node.
+datafor4<-sqldf("select data.ego as one, data.alt as two, data2.alt as three,data3.alt as four,
+data.strength as onetwo ,
+                data2.strength as twothree, 
+                data3.strength as threefour,
+                data4.strength as onefour
+                from data 
+                join data2 
+                on data2.ego=data.alt 
+                join data3 
+                on data3.ego=data2.alt
+                and data3.ego != data.ego
+                join data4
+                on data4.ego=data.ego
+                and data4.alt=data3.alt
+                and data3.alt != data.alt")
+
+# Also we have th remove those contain triad relations (eg. 1->3 or 2->4)
+# Then merge the goodenss and fairness again.
+
+find_edge = function(x){
+  find=function(y,z=x){
+    c=T
+    if(z[1]==y[1]&z[3]==y[2]) c=F
+    else if(z[2]==y[1]&z[4]==y[2]) c=F 
+    return(c)
+  }
+  tt=apply(data,1,find)
+  if (any(tt==F)) x=rep(NA,8)
+  return(x)
+}
+
+newfor4=t(as.matrix(apply(datafor4, 1, find_edge)))
+colnames(newfor4) = c('one', 'two', 'three', 'four', 'onetwo', 'twothree', 'threefour', 'onefour')
+newfor4=na.omit(newfor4)
+
+datafor4 = merge(newfor4, fair, by.x = 'one', by.y = 'ego', all.x = T)
+datafor4 = merge(datafor4, good, by.x = 'four', by.y = 'alt', all.x = T)
+
+predictfor4<-lm(onefour~onetwo+twothree+threefour+onetwo*twothree+onetwo*threefour+twothree*threefour+
+                  goodness+fairness+goodness*onetwo+goodness*twothree+goodness*threefour+goodness*fairness
+                +fairness*onetwo+fairness*twothree+fairness*threefour,data=datafor4)
+summary(predictfor4)
+
+```
+
+Now the adjusted R-square 0.6054, which is lower, and we would find the adjusted R-square would keep decreasing if we build a similar model for group of 5. It seems that a larger network in similar pattern could not offer more predictive power.
+
+Run some basic statistic to compare the group of 3 and 4 and we decide to use coefficient of variance rather than variance because it is more helpful to reflect the fluctuation arount their own means. The result matches what we found in the regression models.
+
+```{r}
+mean(datafor3$onethree)
+mean(datafor4$onefour)
+sd(datafor3$onethree)/mean(datafor3$onethree)
+sd(datafor4$onefour)/mean(datafor4$onefour)
+```
+
+To make a better prediction, we can use binning for the independent varibale or for the dependent variable to increase the adjusted R-square or the AUC (if we have a logistic model after binning), and we can keep adding some attributes of the nodes or some statistics about the strength into the regression formula, but by now we have already reach some conclusions.
+
+## Part 4 : Findings
+
+* Suppose there are 4 people, A, B, C and D, then, A knows B, B knows C, C knows D, but A doesn't know C and B doesn't know D, which means there is no sub network in this group of 4. Then the trust from A to D would be weak and not easy to predict. The relation from A to D would improve if A knows C first or B knows D first, which means they form a sub network of 3 people.
+
+* We find that the network follows the power-law distribution and the correlation between eigen vector and betweenness centrality is relatively low, when we first enter the network and are not able to connect with users with the highest degrees, we can try to find those with high eigenvector and ask them to help introduce. Based on what we found in the prediction part, the strength of trust from the high-degree user to us would be more predictable, stable and powerful than when we are introduced by someone that the high-degree user have no connection to. 
+
+* If we fail to build connection with these users, we can connect to those users with high goodness (they receive high-value trust from the others on average), they might not able to introduce us to lots of users, but at least we can have a satisfying transaction with them and we can enlarge our network slowly.
+
+
